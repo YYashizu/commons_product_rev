@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>販促スケジュール（逆算）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+    background: #ffffff; color: #1a1a1a;
+    padding: 20px 16px 32px; font-size: 14px;
+  }
+  h1 { font-size: 15px; font-weight: 500; color: #555; margin-bottom: 4px; }
+  .subtitle { font-size: 11px; color: #aaa; margin-bottom: 16px; }
+  .input-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .input-row label { font-size: 13px; color: #666; white-space: nowrap; }
+  input[type="date"] { font-size: 13px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #1a1a1a; outline: none; }
+  input[type="date"]:focus { border-color: #888; }
+  .toggle-item { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #666; cursor: pointer; }
+  .toggle-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  input[type="checkbox"] { width: 13px; height: 13px; cursor: pointer; }
+  .summary { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .summary-card { background: #f8f8f8; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #666; min-width: 120px; }
+  .summary-card .val { font-size: 18px; font-weight: 600; color: #1a1a1a; margin-top: 2px; }
+  .summary-card.warn .val { color: #c0392b; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead tr { border-bottom: 1.5px solid #e0e0e0; }
+  th { font-size: 11px; font-weight: 500; color: #999; text-align: left; padding: 6px 10px; white-space: nowrap; }
+  td { padding: 10px 10px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr.milestone { background: #fffbf0; }
+  tr.overdue td { background: #fff5f5; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; }
+  .step-name { font-size: 13px; color: #1a1a1a; }
+  .step-rule { font-size: 11px; color: #999; }
+  .date-normal { font-size: 13px; font-weight: 500; color: #1a1a1a; }
+  .date-past { font-size: 13px; font-weight: 500; color: #c0392b; }
+  .date-soon { font-size: 13px; font-weight: 500; color: #e67e22; }
+  .dl-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 6px; font-weight: 500; background: #FCEBEB; color: #A32D2D; }
+  .dow-badge { display: inline-block; font-size: 12px; font-weight: 500; padding: 2px 7px; border-radius: 4px; }
+  .dow-sun { background: #FCEBEB; color: #A32D2D; }
+  .dow-sat { background: #E6F1FB; color: #185FA5; }
+  .dow-normal { background: #f0f0f0; color: #555; }
+  .empty-msg { text-align: center; padding: 28px; color: #aaa; font-size: 13px; }
+  .hint { font-size: 11px; color: #bbb; margin-top: 14px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<h1>販促スケジュール（逆算）</h1>
+<p class="subtitle">チラシディーラー到着日を入力すると、各工程のデッドラインを自動計算します</p>
+
+<div class="input-row">
+  <label>G. チラシディーラー到着日</label>
+  <input type="date" id="goalDate">
+  <div class="toggle-row">
+    <label class="toggle-item"><input type="checkbox" id="skipSat" checked> 土曜除く</label>
+    <label class="toggle-item"><input type="checkbox" id="skipSun" checked> 日曜除く</label>
+  </div>
+</div>
+
+<div class="summary" id="summary" style="display:none;"></div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:36px;">工程</th>
+        <th>内容</th>
+        <th style="min-width:150px;">デッドライン根拠</th>
+        <th style="min-width:110px;">デッドライン</th>
+        <th style="min-width:48px;">曜日</th>
+      </tr>
+    </thead>
+    <tbody id="schedTable"></tbody>
+  </table>
+</div>
+
+<p class="hint">※ 祝日は考慮していません。必要に応じて手動で調整してください。</p>
+
+<script>
+var DAYS_JP = ['日','月','火','水','木','金','土'];
+
+var today = new Date();
+today.setHours(0,0,0,0);
+
+var BADGE_STYLES = [
+  { bg: '#EEEDFE', color: '#3C3489' },
+  { bg: '#E1F5EE', color: '#085041' },
+  { bg: '#E1F5EE', color: '#085041' },
+  { bg: '#FAECE7', color: '#712B13' },
+  { bg: '#FAECE7', color: '#712B13' },
+  { bg: '#FAECE7', color: '#712B13' },
+  { bg: '#E6F1FB', color: '#0C447C' }
+];
+
+var STEPS = [
+  { id: 'A', name: '企画概要確定',                              rule: 'Bの5営業日前',    milestone: false },
+  { id: 'B', name: 'チラシ・バナー・商品（パンフ・ポスター）初稿',    rule: 'Cの4営業日前',    milestone: false },
+  { id: 'C', name: 'チラシ・バナー・商品（パンフ・ポスター）内容確定', rule: 'Dの10営業日前',   milestone: false },
+  { id: 'D', name: 'チラシBGJ納品',                             rule: 'Gの4営業日前',    milestone: false },
+  { id: 'E', name: 'META出稿・ササキ砲',                        rule: 'Cから4営業日後',  milestone: false },
+  { id: 'F', name: 'LINE投稿設定',                              rule: 'Cから4営業日後',  milestone: false },
+  { id: 'G', name: 'チラシディーラー到着',                      rule: '（起点）',        milestone: true  }
+];
+
+function getSkipSat() { return document.getElementById('skipSat').checked; }
+function getSkipSun() { return document.getElementById('skipSun').checked; }
+
+function subBiz(date, n) {
+  if (!date) return null;
+  var d = new Date(date.getTime());
+  var removed = 0;
+  while (removed < n) {
+    d.setDate(d.getDate() - 1);
+    var dow = d.getDay();
+    if (getSkipSat() && dow === 6) continue;
+    if (getSkipSun() && dow === 0) continue;
+    removed++;
+  }
+  return d;
+}
+
+function addBiz(date, n) {
+  if (!date) return null;
+  var d = new Date(date.getTime());
+  var added = 0;
+  while (added < n) {
+    d.setDate(d.getDate() + 1);
+    var dow = d.getDay();
+    if (getSkipSat() && dow === 6) continue;
+    if (getSkipSun() && dow === 0) continue;
+    added++;
+  }
+  return d;
+}
+
+function fmt(date) {
+  var y = date.getFullYear();
+  var m = String(date.getMonth() + 1).padStart(2, '0');
+  var day = String(date.getDate()).padStart(2, '0');
+  return y + '/' + m + '/' + day;
+}
+
+function diffDays(date) {
+  var d = new Date(date.getTime());
+  d.setHours(0,0,0,0);
+  return Math.round((d - today) / 86400000);
+}
+
+function calcDates(goalStr) {
+  var d = {};
+  d.G = new Date(goalStr);
+  d.D = subBiz(d.G, 4);
+  d.C = subBiz(d.D, 10);
+  d.E = addBiz(d.C, 4);
+  d.F = addBiz(d.C, 4);
+  d.B = subBiz(d.C, 4);
+  d.A = subBiz(d.B, 5);
+  return d;
+}
+
+function render() {
+  var val = document.getElementById('goalDate').value;
+  var tbody = document.getElementById('schedTable');
+  var summaryEl = document.getElementById('summary');
+  tbody.innerHTML = '';
+
+  if (!val) {
+    summaryEl.style.display = 'none';
+    var emptyTr = document.createElement('tr');
+    var emptyTd = document.createElement('td');
+    emptyTd.colSpan = 5;
+    emptyTd.className = 'empty-msg';
+    emptyTd.textContent = '上のチラシディーラー到着日を入力するとデッドラインが自動計算されます';
+    emptyTr.appendChild(emptyTd);
+    tbody.appendChild(emptyTr);
+    return;
+  }
+
+  var dates = calcDates(val + 'T00:00:00');
+  var pastCount = 0;
+  var soonCount = 0;
+
+  for (var i = 0; i < STEPS.length; i++) {
+    var step = STEPS[i];
+    var d = dates[step.id];
+    var dow = d ? DAYS_JP[d.getDay()] : '';
+    var bs = BADGE_STYLES[i];
+    var dowClass = dow === '日' ? 'dow-sun' : dow === '土' ? 'dow-sat' : 'dow-normal';
+    var diff = d ? diffDays(d) : null;
+
+    var isPast = false;
+    var isSoon = false;
+    var dateClass = 'date-normal';
+    if (diff !== null && step.id !== 'G') {
+      if (diff < 0) { isPast = true; dateClass = 'date-past'; pastCount++; }
+      else if (diff <= 3) { isSoon = true; dateClass = 'date-soon'; soonCount++; }
+    }
+
+    var tr = document.createElement('tr');
+    if (step.milestone) tr.classList.add('milestone');
+    if (isPast) tr.classList.add('overdue');
+
+    var td1 = document.createElement('td');
+    td1.innerHTML = '<span class="badge" style="background:' + bs.bg + ';color:' + bs.color + ';">' + step.id + '</span>';
+    var td2 = document.createElement('td');
+    td2.innerHTML = '<div class="step-name">' + step.name + '</div>';
+    var td3 = document.createElement('td');
+    td3.innerHTML = '<span class="step-rule">' + step.rule + '</span>';
+    var td4 = document.createElement('td');
+    if (d) {
+      td4.innerHTML = '<span class="' + dateClass + '">' + fmt(d) + '</span>' + (isPast ? '<span class="dl-badge">期限超過</span>' : '');
+    } else {
+      td4.innerHTML = '<span style="color:#ccc;">—</span>';
+    }
+    var td5 = document.createElement('td');
+    td5.innerHTML = d ? '<span class="dow-badge ' + dowClass + '">' + dow + '</span>' : '';
+
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+    tr.appendChild(td4); tr.appendChild(td5);
+    tbody.appendChild(tr);
+  }
+
+  var goalDate = new Date(val + 'T00:00:00');
+  var daysToGoal = diffDays(goalDate);
+  summaryEl.style.display = 'flex';
+  summaryEl.innerHTML =
+    '<div class="summary-card"><div>到着まで</div><div class="val">' + daysToGoal + '日</div></div>' +
+    '<div class="summary-card' + (pastCount > 0 ? ' warn' : '') + '"><div>期限超過</div><div class="val">' + pastCount + '工程</div></div>' +
+    '<div class="summary-card"><div>要注意（3日以内）</div><div class="val">' + soonCount + '工程</div></div>';
+}
+
+document.getElementById('goalDate').addEventListener('change', render);
+document.getElementById('skipSat').addEventListener('change', render);
+document.getElementById('skipSun').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
