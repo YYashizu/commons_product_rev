@@ -1,0 +1,19 @@
+# Netlify 設定（静的サイト・ビルド不要）
+# リポジトリ直下をそのまま公開し、トップページに運勢ページを表示する。
+
+[build]
+  publish = "."
+
+# ルート( / )アクセス時に運勢ページを表示（URLは / のまま）。
+# force=true で、既存の index.html より運勢ページを優先する。
+[[redirects]]
+  from = "/"
+  to = "/fortune_2026.html"
+  status = 200
+  force = true
+
+# 販促スケジュールツールは /tool で開けるようにする（任意）。
+[[redirects]]
+  from = "/tool"
+  to = "/index.html"
+  status = 200
